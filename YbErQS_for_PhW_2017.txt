@@ -1,0 +1,250 @@
+SetDirectory[NotebookDirectory[]];
+c0 = 299792458; (* speed of light *)
+cm2 = 10^-4;
+cm3 = 10^-6;
+cmminus3 = 10^6;
+fpump = c0/(940*10^-9); (* pump frequency *)
+flas = c0/(1533*10^-9); (* lasing frequency *)
+h = 6.62607004*10^-34; (* Planck's constant *)
+
+(* cavity parameters, dimensions in m *)
+nAE = 1.533; (* active element refractive index at 1533 *)
+lAE = 30*10^-3;  (* active element length *)
+nQ = 1.72;  (* Q-switch refractive index *)
+lQ = 2*10^-3; (* Q-switch width *)
+lair = 65*10^-3 - (lAE + lQ); (* total air gaps *)
+Lcav = lAE*nAE + lQ*nQ + lair; (* optical cavity length *)
+tcav = 2*Lcav/c0; (* cavity r.t.t. *)
+Tm = 0.13; (* output mirror transmission *)
+\[CapitalLambda] = 0.02;  (* other linear cavity losses *)
+
+(* lifetimes, s *)
+(* rates, s^-1 *)
+tYb = 0.8*10^-3; (* Yb 2F5/2 lifetime *)
+tEr = 8*10^-3; (* Er 4I13/2 lifetime *)
+A43 = 3.6*10^5; (* 4I9/2 relaxation rate *)
+A32 = 3.5*10^8; (* 4I11/2 relaxation rate *)
+tCo = 350*10^-9; (* 4T1(4F) Co lifetime *)
+tCo32 = 20*10^-15; (* 4T1(4P) Co lifetime *)
+
+(* cross sections *)
+saYb = 1*10^-20 cm2; (* Yb @ 940 nm absorption cross section *)
+seYb = saYb; (* Yb @ 940 nm emission cross section *)
+saEr = 0.7*10^-20 cm2; (* Er @ 1533 nm absorption cross section *)
+seEr = saEr; (* Er @ 1533 nm emission cross section *)
+saCo = 3.2*10^-19 cm2; (* Co absorption cross section *)
+sESACo = 0.28*10^-19 cm2;  (* Co excited state absorption cross \
+section  *)
+
+(* coefficients *)
+CET = 0.6*10^-16 cm3; (*  Yb 2F5/2 \[Rule] Er 4I11/2 energy transfer \
+coefficient *)
+CUP = 1.2*10^-18 cm3; (* 4I13/2 \[Rule] 4I15/2 + 4I9/2 up-conversion \
+coefficient *)
+
+(* concentrations *)
+NYb = 2.5*10^21 cmminus3; (* Yb concentration *)
+NEr = 5*10^19 cmminus3; (* Er concentration *)
+wtCoO = 0.02/100; (* CoO mass ratio *)
+MCoO = 74.93*10^-3; (* CoO molar mass, kg/mol *)
+denMAS = 3.64*10^3; (* spinel density *)
+NA = 6.02214082*10^23; (* Avogadro number *)
+NCo = NA*denMAS*wtCoO/MCoO ; (* Co concentration *)
+
+(* heaviside-Pi like pulse with start at t0 and duration tp *)
+Pulse[t_, t0_, tp_] := 
+  HeavisideTheta[t - t0] - HeavisideTheta[t - t0 - tp];
+
+(* мmodified pulse with exponential decay *)
+PulseM[t_, t0_, tp_] := 
+  If[t < t0 + tp, 
+   HeavisideTheta[t - t0] - HeavisideTheta[t - t0 - tp], 
+   Exp[-(t - t0 - tp)/(0.00002)]];
+
+endtime = 6.5*10^-3; (* simulation endtime *)
+tpump = 5*10^-3; (* pump duration *)
+Kpump = 0.1; (* pump efficiency coefficient *)
+ASE = 1; (* amplified spontaneous emission coefficient *)
+Clear[Solution];
+Solution[Ip_, tpump_, lQ_, NCo_, saCo_, sESACo_, 
+   tCo_, \[CapitalLambda]_] := NDSolve[{
+    NYb1'[t] + NYb2'[t] == 0.,
+    NEr1'[t] + NEr2'[t] + NEr3'[t] + NEr4'[t] == 0.,
+    NCo1'[t] + NCo2'[t] + NCo3'[t] == 0.,
+    NYb2[0] == 0.,
+    NEr2[0] == 0.,
+    NEr3[0] == 0.,
+    NEr4[0] == 0.,
+    NCo2[0] == 0.,
+    NCo3[0] == 0.,
+    Ilas[0] == 0.,
+    NYb1[0] == 1.,
+    NCo1[0] == 1.,
+    NEr1[0] == 1.,
+    NYb2'[
+      t] == (Ip*PulseM[t, 10^-9, tpump])/(h*fpump)*
+       Kpump*(saYb*NYb1[t] - seEr*NYb2[t]) - CET*NEr*NYb2[t]*NEr1[t] -
+       NYb2[t]/tYb,
+    NEr2'[t] == -Ilas[t]/(h*flas) (seEr*NEr2[t] - saEr*NEr1[t]) + 
+      A32*NEr3[t] - NEr2[t]/tEr - 2 CUP*NEr*NEr2[t]*NEr2[t],
+    NEr3'[t] == A43*NEr4[t] + CET*NYb*NYb2[t]*NEr1[t] - A32*NEr3[t],
+    NEr4'[t] == CUP*NEr*NEr2[t]*NEr2[t] - A43*NEr4[t],
+    NCo2'[t] == (Ilas[t]*saCo)/(h*flas) (1 - NCo2[t] - NCo3[t]) + 
+      NCo3[t]/tCo32 - NCo2[t]/tCo - (Ilas[t]*sESACo)/(h*flas) NCo2[t],
+    NCo3'[t] == (Ilas[t] sESACo)/(h*flas) NCo2[t] - NCo3[t]/tCo32,
+    Ilas'[t] == 
+     Ilas[t]/tcav (2 ((seEr*NEr2[t] - saEr*NEr1[t]) NEr*
+             lAE - (1 - NCo2[t] - NCo3[t]) NCo*saCo*lQ - 
+            NCo2[t]*NCo*sESACo*lQ) - (\[CapitalLambda] + Tm)) + 
+      NEr2[t]/tEr*ASE
+    
+    },
+   {NYb1[t],
+    NYb2[t],
+    NEr1[t],
+    NEr2[t],
+    NEr3[t],
+    NEr4[t],
+    NCo1[t],
+    NCo2[t],
+    NCo3[t],
+    Ilas[t],
+    Ilas'[t],
+    NCo2'[t],
+    NCo2[t] - NCo1[t],
+    Exp[2 ((seEr*NEr2[t] - saEr*NEr1[t]) NEr*lAE)]
+    },
+   {t, 0, endtime}, Method -> "BDF", MaxStepFraction -> 1/4000, 
+   MaxSteps -> 5000000
+   ];
+   
+   (* solve differential equations *)
+
+(* tabulation of pump values with relation to the pump above *)
+Ip = 1.189*10^7; (* initial pump intensity, near threshold, W/m^2: \
+1.131*10^7 free-running;1.189*10^7 with SA *)
+(* relative increase min and max values *)
+deltaIpmin = 0;
+deltaIpmax = 0.5;
+numsteps = 5; (* number of steps *)
+valstep = (deltaIpmax - deltaIpmin)/(numsteps - 1);
+tabdeltaIp = Table[deltaIpmin + valstep*(i - 1), {i, 1, numsteps}];
+Ipfordelta[Ip_, deltaIp_] := (1 + deltaIp)*Ip;
+
+(* find solutions for the tabulated pump values *)
+(* Q-switch parameters, as we calculate parameters from transmission *)
+
+
+tempsaCo = 2.3*(saEr + seEr); (* Co cross-section *)
+templQ = 2*10^-3;
+temptrans = 
+  0.96; (* initial transmission temptrans = 1 in case of a \
+free-running laser *)
+tempNCo = -Log[temptrans]/(tempsaCo*templQ); (* tempNCo = 0 *)
+
+(* integrate *)
+Clear[soltabIp, soldNEr, solNYb2, solNCo1, solNCo2, solNCo3];
+sol = Table[
+   Solution[Ipfordelta[Ip, tabdeltaIp[[i]]], tpump, templQ, tempNCo, 
+    tempsaCo, sESACo, tCo, \[CapitalLambda]], {i, 1, numsteps}];
+
+(* laser output intensity *)
+soltabIp[t_] := 
+  Evaluate[Table[Ilas[t] /. sol[[i, 1]], {i, 1, numsteps}]];
+(* laser gain *)
+soldNEr[t_] := 
+  Evaluate[Table[
+    Exp[2 ((seEr*NEr2[t] - saEr*NEr1[t]) NEr*lAE)] /. sol[[i, 1]], {i,
+      1, numsteps}]];
+(* ytterbium population *)
+solNYb2[t_] := 
+  Evaluate[Table[NYb2[t] /. sol[[i, 1]], {i, 1, numsteps}]];
+(* cobalt population 1 *)
+solNCo1[t_] := 
+  Evaluate[Table[NCo1[t] /. sol[[i, 1]], {i, 1, numsteps}]];
+(* cobalt population 2 *)
+solNCo2[t_] := 
+   Evaluate[Table[NCo2[t] /. sol[[i, 1]], {i, 1, numsteps}]];;
+(* cobalt population 3 *)
+solNCo3[t_] := 
+  Evaluate[Table[NCo3[t] /. sol[[i, 1]], {i, 1, numsteps}]];
+
+(* plotting *)
+tstart = 2.5*10^-3;
+tend = 5.5*10^-3;
+plotindex = 5;
+outcoeff = Tm*(0.003*Pi*(2.2*10^-3)^2);
+(* intensity plot *)
+IntPlot = 
+  Plot[soltabIp[t*10^(-3)][[plotindex]]*outcoeff, {t, tstart*10^(3), 
+    tend*10^(3)},
+   PlotRange -> Full, PlotPoints -> 400, MaxRecursion -> 10, 
+   GridLines -> None,
+   FrameLabel -> {"\!\(\*
+StyleBox[\"t\",\nFontSlant->\"Italic\"]\), ms", "\!\(\*
+StyleBox[\"P\",\nFontSlant->\"Italic\"]\), arb.unit"}, 
+   Frame -> {True, True, False, False}, 
+   PlotStyle -> {{AbsoluteThickness[2], Blue}, {AbsoluteThickness[2], 
+      Orange}}, 
+   LabelStyle -> 
+    Directive[FontSize -> 24, FontFamily -> "Arial", Black], 
+   ImageSize -> 600, ImagePadding -> {{75, 50}, {60, 10}}, 
+   Axes -> None, FrameTicks -> All];
+PumpPlot = Plot[PulseM[t, 10^-9, tpump], {t, tstart, tend},
+   PlotRange -> Full, PlotPoints -> 400, MaxRecursion -> 9, 
+   FrameLabel -> {None, None, None, "Pump"},
+   Frame -> {False, False, False, True}, 
+   PlotStyle -> {{AbsoluteThickness[2], Orange}}, 
+   LabelStyle -> 
+    Directive[FontSize -> 24, FontFamily -> "Arial", Black], 
+   ImageSize -> 600, ImagePadding -> {{75, 50}, {60, 10}}, 
+   Ticks -> {{}, {0, 0.25}}, Axes -> None];
+CombPlot = Overlay[{IntPlot, PumpPlot}]
+
+(* Yb plot *)
+YbPlot = Plot[{solNYb2[t*10^(-3)][[plotindex]]}, {t, tstart*10^(3), 
+   tend*10^(3)},
+  PlotRange -> Full, PlotPoints -> 300, MaxRecursion -> 9,
+  FrameLabel -> {"\!\(\*
+StyleBox[\"t\",\nFontSlant->\"Italic\"]\), ms", 
+    "\!\(\*SubscriptBox[\(N\), \(Yb2\)]\)"}, 
+  Frame -> {True, True, False, False}, GridLines -> {{tpump}, None}, 
+  PlotStyle -> {{AbsoluteThickness[2], Blue}, {AbsoluteThickness[2], 
+     Orange}}, 
+  LabelStyle -> 
+   Directive[FontSize -> 24, FontFamily -> "Arial", Black], 
+  ImageSize -> 600, FrameTicks -> All, Axes -> None]
+
+(* gain plot *)
+GainPlot = 
+ Plot[{soldNEr[t*10^(-3)][[plotindex]]}, {t, tstart*10^(3), 
+   tend*10^(3)},
+  PlotRange -> {1.05, 
+    1.05*Exp[\[CapitalLambda] + Tm + (1 - temptrans)]}, 
+  PlotPoints -> 300, MaxRecursion -> 9,
+  FrameLabel -> {"\!\(\*
+StyleBox[\"t\",\nFontSlant->\"Italic\"]\), ms", "\!\(\*
+StyleBox[\"G\",\nFontSlant->\"Italic\"]\)"}, 
+  Frame -> {True, True, False, False}, 
+  GridLines -> {{tpump}, {Exp[\[CapitalLambda] + Tm + 
+       2*(1 - temptrans)]}}, 
+  PlotStyle -> {{AbsoluteThickness[2], Blue}, {AbsoluteThickness[2], 
+     Orange}}, 
+  LabelStyle -> 
+   Directive[FontSize -> 24, FontFamily -> "Arial", Black], 
+  ImageSize -> 600, FrameTicks -> All, Axes -> None]
+
+(* absorber plot *)
+CobPlot = 
+ Plot[{solNCo2[t*10^(-3)][[plotindex]] - 
+    solNCo1[t*10^(-3)][[plotindex]]}, {t, tstart*10^(3), tend*10^(3)},
+  PlotRange -> Full, PlotPoints -> 300, MaxRecursion -> 9,
+  FrameLabel -> {"\!\(\*
+StyleBox[\"t\",\nFontSlant->\"Italic\"]\), ms", 
+    "\!\(\*SubscriptBox[\(N\), \(Co2\)]\)-\!\(\*SubscriptBox[\(N\), \
+\(Co1\)]\)"}, Frame -> {True, True, False, False}, GridLines -> None, 
+  PlotStyle -> {{AbsoluteThickness[2], Blue}, {AbsoluteThickness[2], 
+     Orange}}, 
+  LabelStyle -> 
+   Directive[FontSize -> 24, FontFamily -> "Arial", Black], 
+  ImageSize -> 600, FrameTicks -> All, Axes -> None]
